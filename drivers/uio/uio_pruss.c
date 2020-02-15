@@ -188,27 +188,17 @@ static int pruss_probe(struct platform_device *pdev)
 	// Deassert PRU-ICSS reset
 	gdev->pruss_reset = clk_get(dev, "reset");
 	if (IS_ERR(gdev->pruss_reset)) {
-	    dev_err(dev, "No reset specified, continuing without it\n");
+	    dev_dbg(dev, "No reset specified, continuing without it\n");
 	    gdev->pruss_reset = NULL;
     }
     else
     {
-        ret = clk_prepare(gdev->pruss_reset);
+        ret = clk_prepare_enable(gdev->pruss_reset);
         if (ret) {
-		    dev_err(dev, "Failed to prepare PRU ICSS reset\n");
+		    dev_err(dev, "Failed to de-assert PRU ICSS reset\n");
             clk_put(gdev->pruss_reset);
             gdev->pruss_reset = NULL;
             goto err_clk_disable;
-	    }
-	    else
-	    {
-	        ret = clk_enable(gdev->pruss_reset);
-	        if (ret) {
-	            dev_err(dev, "Failed to de-assert PRU ICSS reset\n");
-                clk_put(gdev->pruss_reset);
-                gdev->pruss_reset = NULL;
-                goto err_clk_disable;
-	        }
 	    }
     }
 
