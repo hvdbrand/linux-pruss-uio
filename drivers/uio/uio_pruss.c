@@ -27,6 +27,9 @@
 #include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/genalloc.h>
+#ifdef CONFIG_OF
+#include <linux/of.h>
+#endif
 
 #define DRV_NAME "pruss_uio"
 #define DRV_VERSION "1.0"
@@ -116,6 +119,23 @@ static void pruss_cleanup(struct device *dev, struct uio_pruss_dev *gdev)
 	kfree(gdev);
 }
 
+static struct uio_pruss_pdata* pruss_get_platdata(struct device *dev)
+{
+    struct uio_pruss_pdata *pdata = dev_get_platdata(dev);
+#ifdef CONFIG_OF
+    if (!pdata && dev->of_node) {
+        pdata = kzalloc(sizeof(struct uio_pruss_pdata), GFP_KERNEL);
+        pdata->sram_pool = NULL;
+		if (of_property_read_u32(dev->of_node, "ti,pintc-offset",
+                                 &pdata->pintc_base) < 0) {
+			dev_err(dev, "Can't parse ti,pintc-offset property\n");
+			pdata = NULL;
+		}
+    }
+#endif
+    return pdata;
+}
+
 static int pruss_probe(struct platform_device *pdev)
 {
 	struct uio_info *p;
@@ -123,7 +143,12 @@ static int pruss_probe(struct platform_device *pdev)
 	struct resource *regs_prussio;
 	struct device *dev = &pdev->dev;
 	int ret, cnt, i, len;
-	struct uio_pruss_pdata *pdata = dev_get_platdata(dev);
+
+	struct uio_pruss_pdata *pdata = pruss_get_platdata(dev);
+	if (!pdata) {
+		dev_err(dev, "Platform data not set\n");
+        return PTR_ERR(pdata);
+    }
 
 	gdev = kzalloc(sizeof(struct uio_pruss_dev), GFP_KERNEL);
 	if (!gdev)
@@ -252,15 +277,25 @@ static int pruss_remove(struct platform_device *dev)
 {
 	struct uio_pruss_dev *gdev = platform_get_drvdata(dev);
 
-	pruss_cleanup(&dev->dev, gdev);
+	if (gdev)
+		pruss_cleanup(&dev->dev, gdev);
+
 	return 0;
 }
+
+static const struct of_device_id pruss_dt_ids[] = {
+	{ .compatible = "ti,pruss-v1" },
+	{ .compatible = "ti,pruss-v2" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, pruss_dt_ids);
 
 static struct platform_driver pruss_driver = {
 	.probe = pruss_probe,
 	.remove = pruss_remove,
 	.driver = {
 		   .name = DRV_NAME,
+		   .of_match_table = pruss_dt_ids,
 		   },
 };
 
