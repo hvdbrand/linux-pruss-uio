@@ -65,7 +65,7 @@ MODULE_PARM_DESC(extram_pool_sz, "external ram pool size to allocate");
 
 struct uio_pruss_dev {
 	struct uio_info *info;
-	struct clk *pruss_clk;
+	struct clk *pruss_clk, *pruss_reset;
 	dma_addr_t sram_paddr;
 	dma_addr_t ddr_paddr;
 	void __iomem *prussio_vaddr;
@@ -116,6 +116,11 @@ static void pruss_cleanup(struct device *dev, struct uio_pruss_dev *gdev)
 	kfree(gdev->info);
 	clk_disable(gdev->pruss_clk);
 	clk_put(gdev->pruss_clk);
+	if (gdev->pruss_reset)
+	{
+	    clk_disable(gdev->pruss_reset);
+	    clk_put(gdev->pruss_reset);
+	}
 	kfree(gdev);
 }
 
@@ -160,7 +165,7 @@ static int pruss_probe(struct platform_device *pdev)
 		goto err_free_gdev;
 	}
 
-	/* Power on PRU in case its not done as part of boot-loader */
+	/* Enable the clock for the PRU ICSS */
 	gdev->pruss_clk = clk_get(dev, "pruss");
 	if (IS_ERR(gdev->pruss_clk)) {
 		dev_err(dev, "Failed to get clock\n");
@@ -168,11 +173,44 @@ static int pruss_probe(struct platform_device *pdev)
 		goto err_free_info;
 	}
 
+	ret = clk_prepare(gdev->pruss_clk);
+	if (ret) {
+		dev_err(dev, "Failed to prepare clock\n");
+		goto err_clk_put;
+	}
+
 	ret = clk_enable(gdev->pruss_clk);
 	if (ret) {
 		dev_err(dev, "Failed to enable clock\n");
 		goto err_clk_put;
 	}
+
+	// Deassert PRU-ICSS reset
+	gdev->pruss_reset = clk_get(dev, "reset");
+	if (IS_ERR(gdev->pruss_reset)) {
+	    dev_err(dev, "No reset specified, continuing without it\n");
+	    gdev->pruss_reset = NULL;
+    }
+    else
+    {
+        ret = clk_prepare(gdev->pruss_reset);
+        if (ret) {
+		    dev_err(dev, "Failed to prepare PRU ICSS reset\n");
+            clk_put(gdev->pruss_reset);
+            gdev->pruss_reset = NULL;
+            goto err_clk_disable;
+	    }
+	    else
+	    {
+	        ret = clk_enable(gdev->pruss_reset);
+	        if (ret) {
+	            dev_err(dev, "Failed to de-assert PRU ICSS reset\n");
+                clk_put(gdev->pruss_reset);
+                gdev->pruss_reset = NULL;
+                goto err_clk_disable;
+	        }
+	    }
+    }
 
 	regs_prussio = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!regs_prussio) {
@@ -262,6 +300,11 @@ err_free_sram:
 	if (pdata->sram_pool)
 		gen_pool_free(gdev->sram_pool, gdev->sram_vaddr, sram_pool_sz);
 err_clk_disable:
+    if (gdev->pruss_reset)
+    {
+        clk_disable(gdev->pruss_reset);
+        clk_put(gdev->pruss_reset);
+    }
 	clk_disable(gdev->pruss_clk);
 err_clk_put:
 	clk_put(gdev->pruss_clk);
